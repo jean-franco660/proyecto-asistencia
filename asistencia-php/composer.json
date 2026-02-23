@@ -1,0 +1,12 @@
+{
+    "name": "asistencia/php-mvc",
+    "description": "Sistema de Asistencia — PHP MVC + PDO",
+    "require": {
+        "php": ">=8.1"
+    },
+    "autoload": {
+        "psr-4": {
+            "App\\": "app/"
+        }
+    }
+}
