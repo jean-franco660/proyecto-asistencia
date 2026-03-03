@@ -1,27 +1,45 @@
 <?php
-declare(strict_types = 1)
-;
 
-define('ROOT_PATH', dirname(__DIR__));
+/**
+ * Front Controller
+ * Único punto de entrada a la aplicación
+ */
 
-// Cargar Composer autoload
-require ROOT_PATH . '/vendor/autoload.php';
+define('BASE_PATH', dirname(__DIR__));
 
-// Cargar .env
-if (file_exists(ROOT_PATH . '/.env')) {
-    $env = parse_ini_file(ROOT_PATH . '/.env');
-    foreach ($env as $key => $value) {
-        $_ENV[$key] = $value;
+// Cargar autoloader de Composer
+require BASE_PATH . '/vendor/autoload.php';
+
+// Cargar variables de entorno desde .env
+$envFile = BASE_PATH . '/.env';
+if (file_exists($envFile)) {
+    $lines = file($envFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+    foreach ($lines as $line) {
+        if (str_starts_with(trim($line), '#'))
+            continue;
+        if (str_contains($line, '=')) {
+            [$key, $value] = explode('=', $line, 2);
+            $_ENV[trim($key)] = trim($value);
+            putenv(trim($key) . '=' . trim($value));
+        }
     }
 }
 
-use App\Core\Session;
-use App\Core\Router;
+// Cabeceras CORS y JSON
+header('Content-Type: application/json; charset=UTF-8');
+header('Access-Control-Allow-Origin: *');
+header('Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS');
+header('Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With');
 
-// Iniciar sesión antes de cualquier output
-Session::start();
+if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
+    http_response_code(204);
+    exit;
+}
 
-// Crear el router y cargar rutas web
-$router = new Router();
-require ROOT_PATH . '/routes/web.php';
-$router->dispatch();
+// Cargar rutas
+$router = new App\Core\Router();
+require BASE_PATH . '/routes/api.php';
+
+// Despachar la petición
+$request = new App\Core\Request();
+$router->dispatch($request);

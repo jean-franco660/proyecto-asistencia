@@ -1,27 +1,31 @@
 <?php
 namespace App\Controllers;
 
+use App\Core\JwtAuth;
 use App\Core\Request;
 use App\Core\Response;
-use App\Core\Session;
-use App\Core\View;
 
 class DashboardController
 {
     /**
-     * GET /dashboard
-     * Muestra el panel principal. Requiere sesión activa.
+     * GET /api/dashboard
+     * Header requerido: Authorization: Bearer <token>
+     *
+     * Respuesta exitosa (200):
+     * {
+     *   "message": "Bienvenido al dashboard",
+     *   "user": { "id": 1, "nombre": "...", "email": "...", "rol": "..." }
+     * }
+     *
+     * Respuesta de error (401): token ausente, inválido o expirado.
      */
     public function index(Request $req): void
     {
-        // Guard: si no hay sesión, redirige al login
-        if (!Session::has('user')) {
-            Response::redirect('/login');
-        }
+        // Valida el token JWT y extrae los datos del usuario
+        $user = JwtAuth::fromRequest($req);
 
-        $user = Session::get('user');
-
-        View::render('dashboard.index', [
+        Response::json([
+            'message' => 'Bienvenido al dashboard',
             'user' => $user,
         ]);
     }

@@ -4,82 +4,72 @@ namespace App\Models;
 use App\Core\Database;
 use PDO;
 
-/**
- * Clase base con operaciones CRUD genéricas.
- * Cada modelo extiende esta clase y define:
- *   - protected string $table    → nombre de la tabla en BD
- *   - protected bool $softDelete → true si usa deleted_at
- */
 abstract class BaseModel
 {
     protected PDO $db;
     protected string $table;
     protected string $primaryKey = 'id';
-    protected bool $softDelete = false;
 
-    public function __construct()
-    {
-        $this->db = Database::getInstance();
+    public function __construct() {
+        $this->db = Database::getInstance(); // PDO directo
     }
 
-    /** Busca un registro por su ID */
-    public function find(int $id): array |false
+    public function all(string $orderBy = ''): array
     {
-        $q = "SELECT * FROM {$this->table} WHERE {$this->primaryKey} = :id";
-        if ($this->softDelete)
-            $q .= ' AND deleted_at IS NULL';
-
-        $stmt = $this->db->prepare($q);
-        $stmt->execute([':id' => $id]);
-        return $stmt->fetch();
+        $sql = "SELECT * FROM `{$this->table}`";
+        if ($orderBy) $sql .= " ORDER BY {$orderBy}";
+        return $this->db->query($sql)->fetchAll();
     }
 
-    /** Devuelve todos los registros */
-    public function all(): array
+    public function find(int|string $id): ?array
     {
-        $q = "SELECT * FROM {$this->table}";
-        if ($this->softDelete)
-            $q .= ' WHERE deleted_at IS NULL';
-        return $this->db->query($q)->fetchAll();
+        $stmt = $this->db->prepare("SELECT * FROM `{$this->table}` WHERE `{$this->primaryKey}` = ? LIMIT 1");
+        $stmt->execute([$id]);
+        return $stmt->fetch() ?: null;
     }
 
-    /**
-     * Inserta un registro y retorna el ID generado.
-     * $data = ['columna' => 'valor', ...]
-     */
-    public function create(array $data): int
+    public function findOneBy(string $column, mixed $value): ?array
     {
-        $cols = implode(', ', array_keys($data));
-        $places = ':' . implode(', :', array_keys($data));
-
-        $stmt = $this->db->prepare(
-            "INSERT INTO {$this->table} ({$cols}) VALUES ({$places})"
-        );
-        $stmt->execute($data);
-        return (int)$this->db->lastInsertId();
+        $stmt = $this->db->prepare("SELECT * FROM `{$this->table}` WHERE `{$column}` = ? LIMIT 1");
+        $stmt->execute([$value]);
+        return $stmt->fetch() ?: null;
     }
 
-    /** Actualiza un registro por ID */
-    public function update(int $id, array $data): bool
+    public function create(array $data): int|string
     {
-        $sets = implode(', ', array_map(fn($k) => "{$k} = :{$k}", array_keys($data)));
-        $data[$this->primaryKey] = $id;
-
-        $stmt = $this->db->prepare(
-            "UPDATE {$this->table} SET {$sets} WHERE {$this->primaryKey} = :{$this->primaryKey}"
-        );
-        return $stmt->execute($data);
+        $columns      = implode('`, `', array_keys($data));
+        $placeholders = implode(', ', array_fill(0, count($data), '?'));
+        $stmt = $this->db->prepare("INSERT INTO `{$this->table}` (`{$columns}`) VALUES ({$placeholders})");
+        $stmt->execute(array_values($data));
+        return $this->db->lastInsertId();
     }
 
-    /** Elimina un registro (físicamente o soft delete) */
-    public function delete(int $id): bool
+    public function update(int|string $id, array $data): bool
     {
-        if ($this->softDelete) {
-            return $this->update($id, ['deleted_at' => date('Y-m-d H:i:s')]);
-        }
-        $stmt = $this->db->prepare(
-            "DELETE FROM {$this->table} WHERE {$this->primaryKey} = :id"
-        );
-        return $stmt->execute([':id' => $id]);
+        $sets = implode(', ', array_map(fn($col) => "`{$col}` = ?", array_keys($data)));
+        $stmt = $this->db->prepare("UPDATE `{$this->table}` SET {$sets} WHERE `{$this->primaryKey}` = ?");
+        $values   = array_values($data);
+        $values[] = $id;
+        return $stmt->execute($values);
+    }
+
+    public function delete(int|string $id): bool
+    {
+        $stmt = $this->db->prepare("DELETE FROM `{$this->table}` WHERE `{$this->primaryKey}` = ?");
+        return $stmt->execute([$id]);
+    }
+
+    // Helpers internos
+    protected function query(string $sql, array $bindings = []): array
+    {
+        $stmt = $this->db->prepare($sql);
+        $stmt->execute($bindings);
+        return $stmt->fetchAll();
+    }
+
+    protected function execute(string $sql, array $bindings = []): bool
+    {
+        $stmt = $this->db->prepare($sql);
+        return $stmt->execute($bindings);
     }
 }

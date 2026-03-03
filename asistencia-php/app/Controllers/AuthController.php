@@ -1,31 +1,26 @@
 <?php
 namespace App\Controllers;
 
+use App\Core\JwtAuth;
 use App\Core\Request;
 use App\Core\Response;
-use App\Core\Session;
-use App\Core\View;
 use App\Models\UsuarioWeb;
 
 class AuthController
 {
     /**
-     * GET /login
-     * Muestra el formulario de login.
-     * Si ya hay sesión activa, redirige al dashboard.
-     */
-    public function loginForm(Request $req): void
-    {
-        if (Session::has('user')) {
-            Response::redirect('/dashboard');
-        }
-
-        View::render('auth.login');
-    }
-
-    /**
-     * POST /login
-     * Procesa el formulario de login.
+     * POST /api/auth/login
+     * Body JSON: { "email": "...", "password": "..." }
+     *
+     * Respuesta exitosa (200):
+     * {
+     *   "token": "eyJ...",
+     *   "expires_in": 3600,
+     *   "user": { "id": 1, "nombre": "...", "email": "...", "rol": "..." }
+     * }
+     *
+     * Respuesta de error (400 / 401):
+     * { "error": "..." }
      */
     public function login(Request $req): void
     {
@@ -34,34 +29,25 @@ class AuthController
 
         // Validación básica
         if (empty($email) || empty($password)) {
-            Session::flash('error', 'Email y contraseña son obligatorios.');
-            Response::redirect('/login');
+            Response::json(['error' => 'Los campos email y password son obligatorios'], 400);
         }
 
         $model = new UsuarioWeb();
         $usuario = $model->findByEmail($email);
 
-        // Verifica si el usuario existe y la contraseña es correcta
-        // password_verify() compara con el hash guardado en BD (creado con password_hash)
         if (!$usuario || !password_verify($password, $usuario['password'])) {
-            Session::flash('error', 'Correo o contraseña incorrectos.');
-            Response::redirect('/login');
+            Response::json(['error' => 'Credenciales incorrectas'], 401);
         }
 
-        // Guardar datos del usuario en sesión (sin el password)
-        unset($usuario['password']);
-        Session::set('user', $usuario);
+        // Excluir el hash de contraseña del payload del token y la respuesta
+        unset($usuario['password'], $usuario['deleted_at']);
 
-        Response::redirect('/dashboard');
-    }
+        $token = JwtAuth::encode($usuario);
 
-    /**
-     * GET /logout
-     * Cierra la sesión y redirige al login.
-     */
-    public function logout(Request $req): void
-    {
-        Session::destroy();
-        Response::redirect('/login');
+        Response::json([
+            'token' => $token,
+            'expires_in' => (int)($_ENV['JWT_EXPIRY'] ?? 3600),
+            'user' => $usuario,
+        ]);
     }
 }

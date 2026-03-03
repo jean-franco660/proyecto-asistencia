@@ -1,67 +1,82 @@
 <?php
 namespace App\Core;
 
-/**
- * Router HTTP simple.
- * Soporta parámetros dinámicos en la URL: /usuarios/{id}
- * y los métodos GET, POST, PUT, DELETE.
- */
 class Router
 {
     private array $routes = [];
 
-    private function addRoute(string $method, string $path, array $handler): void
+    // Registro de rutas públicas
+    public function get(string $path, array $handler): void    { $this->add('GET',    $path, $handler); }
+    public function post(string $path, array $handler): void   { $this->add('POST',   $path, $handler); }
+    public function put(string $path, array $handler): void    { $this->add('PUT',    $path, $handler); }
+    public function patch(string $path, array $handler): void  { $this->add('PATCH',  $path, $handler); }
+    public function delete(string $path, array $handler): void { $this->add('DELETE', $path, $handler); }
+
+    // Rutas protegidas JWT tipo 'app' (trabajadores)
+    public function authAppGet(string $p, array $h): void    { $this->add('GET',    $p, $h, 'app'); }
+    public function authAppPost(string $p, array $h): void   { $this->add('POST',   $p, $h, 'app'); }
+    public function authAppPut(string $p, array $h): void    { $this->add('PUT',    $p, $h, 'app'); }
+    public function authAppPatch(string $p, array $h): void  { $this->add('PATCH',  $p, $h, 'app'); }
+    public function authAppDelete(string $p, array $h): void { $this->add('DELETE', $p, $h, 'app'); }
+
+    //  Rutas protegidas JWT tipo 'web' (administradores)
+    public function authWebGet(string $p, array $h): void    { $this->add('GET',    $p, $h, 'web'); }
+    public function authWebPost(string $p, array $h): void   { $this->add('POST',   $p, $h, 'web'); }
+    public function authWebPut(string $p, array $h): void    { $this->add('PUT',    $p, $h, 'web'); }
+    public function authWebPatch(string $p, array $h): void  { $this->add('PATCH',  $p, $h, 'web'); }
+    public function authWebDelete(string $p, array $h): void { $this->add('DELETE', $p, $h, 'web'); }
+
+    private function add(string $method, string $path, array $handler, ?string $auth = null): void
     {
-        // /usuarios/{id} → regex con grupo nombrado: (?P<id>[^/]+)
+        // Convertir {param} en grupo de captura de regex
         $pattern = preg_replace('/\{(\w+)\}/', '(?P<$1>[^/]+)', $path);
         $this->routes[] = [
-            'method' => strtoupper($method),
-            'pattern' => "#^{$pattern}$#",
+            'method'  => $method,
+            'pattern' => '#^' . $pattern . '$#',
             'handler' => $handler,
+            'auth'    => $auth,   // null = pública, 'app' o 'web' = protegida
+            'params'  => [],
         ];
-    }
-
-    public function get(string $path, array $handler): void
-    {
-        $this->addRoute('GET', $path, $handler);
-    }
-    public function post(string $path, array $handler): void
-    {
-        $this->addRoute('POST', $path, $handler);
-    }
-    public function put(string $path, array $handler): void
-    {
-        $this->addRoute('PUT', $path, $handler);
-    }
-    public function delete(string $path, array $handler): void
-    {
-        $this->addRoute('DELETE', $path, $handler);
     }
 
     public function dispatch(): void
     {
-        $method = $_SERVER['REQUEST_METHOD'];
+        // Manejar preflight CORS
+        if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
+            header('Access-Control-Allow-Origin: *');
+            header('Access-Control-Allow-Headers: Authorization, Content-Type');
+            header('Access-Control-Allow-Methods: GET, POST, PUT, PATCH, DELETE, OPTIONS');
+            http_response_code(204);
+            exit();
+        }
 
-        // Limpia la URI: extrae solo el path (sin query string) y normaliza slashes
-        $uri = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH) ?? '/';
-        $uri = '/' . trim($uri, '/');
-        if ($uri === '')
-            $uri = '/';
+        $method = $_SERVER['REQUEST_METHOD'];
+        $uri    = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
+        $req    = new Request();
 
         foreach ($this->routes as $route) {
-            if ($route['method'] === $method && preg_match($route['pattern'], $uri, $matches)) {
-                // Extrae solo los parámetros con clave de texto (los grupos nombrados)
-                $params = array_filter($matches, 'is_string', ARRAY_FILTER_USE_KEY);
+            if ($route['method'] !== $method) continue;
 
-                [$class, $action] = $route['handler'];
+            if (preg_match($route['pattern'], $uri, $matches)) {
+                // Inyectar parámetros de ruta en el Request
+                $params = array_filter($matches, 'is_string', ARRAY_FILTER_USE_KEY);
+                $req->setParams($params);
+
+                // Ejecutar middleware si la ruta es protegida
+                if ($route['auth'] === 'app') {
+                    \App\Middleware\AuthAppMiddleware::handle();
+                } elseif ($route['auth'] === 'web') {
+                    \App\Middleware\AuthWebMiddleware::handle();
+                }
+
+                // Instanciar controlador y llamar al método
+                [$class, $method] = $route['handler'];
                 $controller = new $class();
-                $controller->$action(new Request($params));
+                $controller->$method($req);
                 return;
             }
         }
 
-        // 404 — ruta no encontrada
-        http_response_code(404);
-        echo '<h1 style="font-family:sans-serif">404 — Página no encontrada</h1>';
+        Response::notFound('Ruta no encontrada');
     }
 }

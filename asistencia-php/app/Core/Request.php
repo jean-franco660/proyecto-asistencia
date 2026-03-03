@@ -1,57 +1,67 @@
 <?php
 namespace App\Core;
 
-/**
- * Encapsula los datos de entrada de una petición HTTP:
- * - Parámetros de URL (/ruta/{id})
- * - Body JSON o POST
- * - Cabeceras HTTP
- */
 class Request
 {
-    private array $params;
-    private array $body;
+    private array $body;      // datos del body (JSON o form)
+    private array $query;     // ?param=valor de la URL
+    private array $params;    // {id} de la ruta (asignados por el Router)
 
-    public function __construct(array $params = [])
+    public function __construct()
     {
-        $this->params = $params;
-
-        // Lee el body crudo y lo decodifica como JSON
-        $raw = file_get_contents('php://input');
-        $json = json_decode($raw ?: '', true);
-
-        // Si no es JSON válido, usa el $_POST (formularios HTML)
-        $this->body = is_array($json) ? $json : $_POST;
+        // Intentar parsear body como JSON
+        $json = json_decode(file_get_contents('php://input'), true);
+        $this->body  = is_array($json) ? $json : $_POST;
+        $this->query  = $_GET;
+        $this->params = [];
     }
 
-    /** Obtiene un parámetro de la URL: /usuarios/{id} → param('id') */
-    public function param(string $key, mixed $default = null): mixed
-    {
-        return $this->params[$key] ?? $default;
-    }
-
-    /** Obtiene un campo del body JSON o POST */
+    /**
+     * Leer del body (POST/JSON).
+     * Ejemplo: $req->input('email')
+     */
     public function input(string $key, mixed $default = null): mixed
     {
         return $this->body[$key] ?? $default;
     }
 
-    /** Devuelve todos los campos del body */
-    public function all(): array
+    /**
+     * Leer query string (?key=valor).
+     * Ejemplo: $req->query('page', 1)
+     */
+    public function query(string $key, mixed $default = null): mixed
     {
-        return $this->body;
+        return $this->query[$key] ?? $default;
     }
 
-    /** Obtiene una cabecera HTTP. Ej: header('Authorization') */
-    public function header(string $name): ?string
+    /**
+     * Leer parámetro de ruta ({id}, {usuarioId}, etc.)
+     * Ejemplo: $req->param('id')
+     */
+    public function param(string $key, mixed $default = null): mixed
     {
-        $key = 'HTTP_' . strtoupper(str_replace('-', '_', $name));
-        return $_SERVER[$key] ?? null;
+        return $this->params[$key] ?? $default;
     }
 
-    /** Método HTTP de la petición (GET, POST, etc.) */
+    /**
+     * Obtener solo los campos indicados del body.
+     * Ejemplo: $req->only(['nombre', 'email'])
+     */
+    public function only(array $keys): array
+    {
+        return array_intersect_key($this->body, array_flip($keys));
+    }
+
+    /**
+     * Usado por el Router para inyectar parámetros de ruta.
+     */
+    public function setParams(array $params): void
+    {
+        $this->params = $params;
+    }
+
     public function method(): string
     {
-        return $_SERVER['REQUEST_METHOD'];
+        return strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET');
     }
 }

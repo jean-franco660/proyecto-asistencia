@@ -1,6 +1,11 @@
 Options -Indexes
-RewriteEngine On
 
+RewriteEngine On
+RewriteBase /
+
+# Si el archivo o directorio existe, servirlo directamente
 RewriteCond %{REQUEST_FILENAME} !-f
 RewriteCond %{REQUEST_FILENAME} !-d
-RewriteRule ^ index.php [L]
+
+# Redirigir todo lo demás al front controller
+RewriteRule ^(.*)$ index.php [QSA,L]
