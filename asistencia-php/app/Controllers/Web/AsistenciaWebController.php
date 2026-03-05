@@ -1,91 +1,116 @@
 <?php
-
 namespace App\Controllers\Web;
 
 use App\Core\Request;
 use App\Core\Response;
-use App\Models\Asistencia;
-use App\Models\AsistenciaDiaria;
+use App\Core\Database;
 
-/**
- * AsistenciaWebController - Visualización y revisión de asistencias en el panel admin
- */
 class AsistenciaWebController
 {
-    private Response $response;
-    private Asistencia $model;
-    private AsistenciaDiaria $modelDiaria;
+    private \PDO $db;
 
-    public function __construct()
-    {
-        $this->response    = new Response();
-        $this->model       = new Asistencia();
-        $this->modelDiaria = new AsistenciaDiaria();
+    public function __construct() {
+        $this->db = Database::getInstance();
     }
 
-    /** GET /v1/web/asistencias */
-    public function index(Request $request): void
-    {
-        $usuarioId = $request->query('usuario_id');
-        $fecha     = $request->query('fecha');
+    private function userId(): int { return (int) ($_REQUEST['auth_user']['sub'] ?? 0); }
+    private function rol(): string { return $_REQUEST['auth_user']['rol'] ?? ''; }
 
-        if ($usuarioId) {
-            $data = $this->model->porUsuario((int)$usuarioId, $fecha ?: null);
-        } else {
-            $data = $this->model->all('fecha DESC');
+    public function index(Request $req): void
+    {
+        $sql = "
+            SELECT ad.id, ad.tipo, ad.marcada_en, ad.distancia_metros,
+                   ad.estado_marcacion, ad.motivo_observacion, ad.estado_revision,
+                   ad.dentro_rango,
+                   a.fecha, a.estado_diario,
+                   u.nombres, u.apellido_paterno, u.codigo_empleado,
+                   s.nombre AS sede_nombre
+            FROM asistencias_diarias ad
+            INNER JOIN asistencias a  ON a.id = ad.asistencia_id
+            INNER JOIN usuarios_app u ON u.id = a.usuario_app_id
+            INNER JOIN sedes s        ON s.id = a.sede_id
+            WHERE 1=1
+        ";
+        $params = [];
+
+        // Supervisor solo ve su sede
+        if ($this->rol() === 'supervisor') {
+            $sql .= " AND a.sede_id IN (
+                SELECT sede_id FROM usuario_web_sede
+                WHERE usuario_web_id = :uid AND activo = 1
+            )";
+            $params[':uid'] = $this->userId();
         }
 
-        $this->response->success($data);
-    }
-
-    /** GET /v1/web/asistencias/{id} */
-    public function show(Request $request): void
-    {
-        $id   = (int)$request->param('id');
-        $item = $this->model->find($id);
-
-        if (!$item) {
-            $this->response->notFound('Registro de asistencia no encontrado.');
+        if ($req->query('sede_id')) {
+            $sql .= " AND a.sede_id = :sid";
+            $params[':sid'] = (int) $req->query('sede_id');
+        }
+        if ($req->query('fecha_inicio')) {
+            $sql .= " AND DATE(ad.marcada_en) >= :fi";
+            $params[':fi'] = $req->query('fecha_inicio');
+        }
+        if ($req->query('fecha_fin')) {
+            $sql .= " AND DATE(ad.marcada_en) <= :ff";
+            $params[':ff'] = $req->query('fecha_fin');
+        }
+        if ($req->query('estado_marcacion')) {
+            $sql .= " AND ad.estado_marcacion = :em";
+            $params[':em'] = $req->query('estado_marcacion');
+        }
+        if ($req->query('estado_revision')) {
+            $sql .= " AND ad.estado_revision = :er";
+            $params[':er'] = $req->query('estado_revision');
         }
 
-        $this->response->success($item);
+        $sql .= " ORDER BY ad.marcada_en DESC LIMIT 200";
+        $stmt = $this->db->prepare($sql);
+        $stmt->execute($params);
+        Response::success($stmt->fetchAll());
     }
 
-    /** GET /v1/web/asistencias/semana */
-    public function resumenSemanal(Request $request): void
+    /**
+     * PATCH /v1/web/asistencias/{id}/revision
+     * El admin/supervisor revisa una marcación OBSERVADA.
+     * Body: { "estado_revision": "APROBADA" | "MANTENER_OBSERVADA", "observacion": "..." }
+     */
+    public function updateRevision(Request $req): void
     {
-        $sedeId = $request->query('sede_id');
-        $data   = $this->model->resumenSemana($sedeId ? (int)$sedeId : null);
-        $this->response->success($data);
-    }
+        $id             = (int) $req->param('id');
+        $estadoRevision = (string) $req->input('estado_revision');
+        $observacion    = (string) $req->input('observacion', '');
 
-    /** GET /v1/web/asistencias/exportar */
-    public function exportar(Request $request): void
-    {
-        $sedeId = $request->query('sede_id');
-        $desde  = $request->query('desde', date('Y-m-01'));
-        $hasta  = $request->query('hasta', date('Y-m-d'));
+        $validos = ['APROBADA', 'MANTENER_OBSERVADA'];
+        if (!in_array($estadoRevision, $validos))
+            Response::unprocessable('estado_revision inválido. Use: ' . implode(' | ', $validos));
 
-        $data = $this->model->exportar($sedeId ? (int)$sedeId : null, $desde, $hasta);
-        $this->response->success($data);
-    }
+        // Verificar que existe y que el rol tiene acceso
+        $stmt = $this->db->prepare("
+            SELECT ad.id, a.sede_id
+            FROM asistencias_diarias ad
+            INNER JOIN asistencias a ON a.id = ad.asistencia_id
+            WHERE ad.id = ?
+        ");
+        $stmt->execute([$id]);
+        $marcacion = $stmt->fetch();
+        if (!$marcacion) Response::notFound('Marcación no encontrada');
 
-    /** PUT /v1/web/asistencias/{id}/review */
-    public function updateReview(Request $request): void
-    {
-        $id   = (int)$request->param('id');
-        $item = $this->model->find($id);
-
-        if (!$item) {
-            $this->response->notFound('Registro de asistencia no encontrado.');
+        // Supervisor: solo puede revisar su sede
+        if ($this->rol() === 'supervisor') {
+            $stmtChk = $this->db->prepare("
+                SELECT id FROM usuario_web_sede
+                WHERE usuario_web_id = ? AND sede_id = ? AND activo = 1
+            ");
+            $stmtChk->execute([$this->userId(), $marcacion['sede_id']]);
+            if (!$stmtChk->fetch()) Response::error('Sin acceso a esta marcación', 403);
         }
 
-        $body = $request->getBody();
-        $this->model->update($id, array_filter([
-            'presente'    => $body['presente']    ?? null,
-            'observacion' => $body['observacion'] ?? null,
-        ], fn($v) => $v !== null));
+        $this->db->prepare("
+            UPDATE asistencias_diarias
+            SET estado_revision = ?, revision_observacion = ?, revisado_por = ?, revisado_en = NOW()
+            WHERE id = ?
+        ")->execute([$estadoRevision, $observacion ?: null, $this->userId(), $id]);
 
-        $this->response->success($this->model->find($id), 'Asistencia revisada.');
+        Response::success(null, 'Revisión guardada correctamente');
     }
 }

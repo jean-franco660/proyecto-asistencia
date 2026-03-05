@@ -19,7 +19,7 @@ class AuthAppMiddleware
             $decoded = JWT::decode($m[1], new Key($_ENV['JWT_SECRET'], 'HS256'));
             $payload = (array) $decoded;
 
-            // Verificar que es token de app (no de web)
+            // Verificar que es token de app
             if (($payload['tipo'] ?? '') !== 'app')
                 Response::unauthorized('Token no válido para la app móvil');
 

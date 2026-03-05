@@ -1,97 +1,129 @@
 <?php
-
 namespace App\Controllers\App;
 
 use App\Core\Request;
 use App\Core\Response;
-use App\Models\Justificacion;
+use App\Core\Database;
 
-/**
- * JustificacionAppController - Gestión de justificaciones desde la app móvil
- */
 class JustificacionAppController
 {
-    private Response $response;
-    private Justificacion $model;
+    private \PDO $db;
 
-    public function __construct()
-    {
-        $this->response = new Response();
-        $this->model    = new Justificacion();
+    public function __construct() {
+        $this->db = Database::getInstance();
+    }
+
+    private function userId(): int {
+        return (int) ($_REQUEST['auth_user']['sub'] ?? 0);
     }
 
     /**
      * GET /v1/app/justificaciones
-     * Lista las justificaciones del usuario autenticado
+     * El trabajador ve SOLO sus justificaciones.
      */
-    public function index(Request $request): void
+    public function index(Request $req): void
     {
-        $userId = (int)$request->getAttribute('auth_user_id');
-        $data   = $this->model->porUsuario($userId);
-        $this->response->success($data);
-    }
-
-    /**
-     * GET /v1/app/justificaciones/{id}
-     */
-    public function show(Request $request): void
-    {
-        $id     = (int)$request->param('id');
-        $userId = (int)$request->getAttribute('auth_user_id');
-        $item   = $this->model->find($id);
-
-        if (!$item || (int)$item['usuario_id'] !== $userId) {
-            $this->response->notFound('Justificación no encontrada.');
-        }
-
-        $this->response->success($item);
+        $stmt = $this->db->prepare("
+            SELECT j.*, s.nombre AS sede_nombre
+            FROM justificaciones j
+            LEFT JOIN sedes s ON j.sede_id = s.id
+            WHERE j.usuario_app_id = :uid
+            ORDER BY j.created_at DESC
+        ");
+        $stmt->execute([':uid' => $this->userId()]);
+        Response::success($stmt->fetchAll());
     }
 
     /**
      * POST /v1/app/justificaciones
-     * El trabajador envía una justificación
+     * Tipos: ENFERMEDAD, PERMISO_PERSONAL, LICENCIA, COMISION_SERVICIO,
+     *        CAPACITACION, DUELO, MATERNIDAD, PATERNIDAD, OLVIDO_MARCACION, OTRO
      */
-    public function store(Request $request): void
+    public function store(Request $req): void
     {
-        $userId = (int)$request->getAttribute('auth_user_id');
-        $body   = $request->getBody();
+        $userId  = $this->userId();
+        $sedeId  = (int) $req->input('sede_id');
+        $tipo    = (string) $req->input('tipo');
+        $fInicio = (string) $req->input('fecha_inicio');
+        $fFin    = (string) $req->input('fecha_fin');
+        $motivo  = (string) $req->input('motivo', '');
 
-        if (empty($body['motivo'])) {
-            $this->response->validationError(['motivo' => 'El motivo es obligatorio.']);
-        }
+        $tipos_validos = [
+            'ENFERMEDAD','PERMISO_PERSONAL','LICENCIA','COMISION_SERVICIO',
+            'CAPACITACION','DUELO','MATERNIDAD','PATERNIDAD','OLVIDO_MARCACION','OTRO'
+        ];
 
-        $id   = $this->model->create([
-            'usuario_id'     => $userId,
-            'asistencia_id'  => $body['asistencia_id']  ?? null,
-            'motivo'         => $body['motivo'],
-            'descripcion'    => $body['descripcion']    ?? null,
-            'fecha'          => $body['fecha']           ?? date('Y-m-d'),
-            'estado'         => 'pendiente',
+        $errors = [];
+        if (!$sedeId)                         $errors[] = 'sede_id es requerido';
+        if (!in_array($tipo, $tipos_validos)) $errors[] = 'tipo inválido';
+        if (!$fInicio)                        $errors[] = 'fecha_inicio es requerida';
+        if (!$fFin)                           $errors[] = 'fecha_fin es requerida';
+        if (!$motivo)                         $errors[] = 'motivo es requerido';
+        if ($errors) Response::unprocessable('Datos incompletos', $errors);
+
+        // Verificar que el trabajador está asignado a esa sede
+        $stmt = $this->db->prepare("
+            SELECT id FROM usuario_app_sede
+            WHERE usuario_app_id = :uid AND sede_id = :sid AND estado = 'ACTIVO'
+        ");
+        $stmt->execute([':uid' => $userId, ':sid' => $sedeId]);
+        if (!$stmt->fetch()) Response::error('No estás asignado a esa sede', 403);
+
+        $stmt = $this->db->prepare("
+            INSERT INTO justificaciones
+                (usuario_app_id, sede_id, tipo, fecha_inicio, fecha_fin, motivo, estado, created_at)
+            VALUES (:uid, :sid, :tipo, :fi, :ff, :motivo, 'PENDIENTE', NOW())
+        ");
+        $stmt->execute([
+            ':uid'   => $userId,
+            ':sid'   => $sedeId,
+            ':tipo'  => $tipo,
+            ':fi'    => $fInicio,
+            ':ff'    => $fFin,
+            ':motivo'=> $motivo,
         ]);
-        $item = $this->model->find((int)$id);
 
-        $this->response->success($item, 'Justificación enviada.', 201);
+        Response::success(
+            ['id' => $this->db->lastInsertId()],
+            'Justificación enviada. Pendiente de revisión.',
+            201
+        );
+    }
+
+    /** GET /v1/app/justificaciones/{id} */
+    public function show(Request $req): void
+    {
+        $id   = (int) $req->param('id');
+        $stmt = $this->db->prepare(
+            "SELECT * FROM justificaciones WHERE id = :id AND usuario_app_id = :uid"
+        );
+        $stmt->execute([':id' => $id, ':uid' => $this->userId()]);
+        $just = $stmt->fetch();
+        if (!$just) Response::notFound('Justificación no encontrada');
+        Response::success($just);
     }
 
     /**
      * DELETE /v1/app/justificaciones/{id}
-     * Solo si aún está pendiente
+     * Solo se pueden eliminar las que están en estado PENDIENTE.
      */
-    public function destroy(Request $request): void
+    public function destroy(Request $req): void
     {
-        $id     = (int)$request->param('id');
-        $userId = (int)$request->getAttribute('auth_user_id');
-        $item   = $this->model->find($id);
+        $id   = (int) $req->param('id');
+        $uid  = $this->userId();
 
-        if (!$item || (int)$item['usuario_id'] !== $userId) {
-            $this->response->notFound('Justificación no encontrada.');
-        }
+        $stmt = $this->db->prepare(
+            "SELECT estado FROM justificaciones WHERE id = :id AND usuario_app_id = :uid"
+        );
+        $stmt->execute([':id' => $id, ':uid' => $uid]);
+        $just = $stmt->fetch();
 
-        if ($item['estado'] !== 'pendiente') {
-            $this->response->error('Solo se pueden eliminar justificaciones pendientes.', 403);
-        }
+        if (!$just) Response::notFound('Justificación no encontrada');
+        if ($just['estado'] !== 'PENDIENTE')
+            Response::error('Solo se pueden eliminar justificaciones pendientes', 400);
 
-        $this->model->delete($id);
-        $this->response->success(null, 'Justificación eliminada.');
+        $stmt = $this->db->prepare("DELETE FROM justificaciones WHERE id = :id");
+        $stmt->execute([':id' => $id]);
+        Response::success(null, 'Justificación eliminada correctamente');
     }
 }
