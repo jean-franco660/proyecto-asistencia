@@ -121,7 +121,9 @@ class HorarioWebController
         if (isset($data['dias_semana']) && is_array($data['dias_semana']))
             $data['dias_semana'] = json_encode($data['dias_semana']);
 
-        $sets   = implode(', ', array_map(fn($k) => "$k = :$k", array_keys($data)));
+        // FIX Bug #9: los nombres de columna no tenían backticks en el SET dinámico.
+        // Sin backticks, columnas con nombres reservados en MySQL fallarían.
+        $sets   = implode(', ', array_map(fn($k) => "`{$k}` = :{$k}", array_keys($data)));
         $data['id'] = $id;
 
         $stmt = $this->db->prepare("UPDATE horarios_sede SET $sets WHERE id = :id");

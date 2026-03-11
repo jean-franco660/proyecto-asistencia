@@ -37,9 +37,7 @@ $router->authAppGet('/v1/app/estado-dia',                [AsistenciaAppControlle
 $router->authAppGet('/v1/app/asistencia/{usuarioId}',    [AsistenciaAppController::class, 'historial']);
 
 // Horarios de sede
-$router->authAppGet('/v1/app/horarios-sede',             [HorarioAppController::class, 'misHorarios']);
-$router->authAppGet('/v1/app/mis-horarios',              [HorarioAppController::class, 'getMisHorarios']);
-$router->authAppPost('/v1/app/actualizar-horarios',      [HorarioAppController::class, 'actualizarHorarios']);
+$router->authAppGet('/v1/app/horarios', [HorarioAppController::class, 'obtenerHorarios']);
 
 // Justificaciones
 $router->authAppGet('/v1/app/justificaciones',           [JustificacionAppController::class, 'index']);
@@ -102,4 +100,5 @@ $router->authWebPost('/v1/web/justificaciones/{id}/rechazar',[JustificacionWebCo
 $router->authWebDelete('/v1/web/justificaciones/{id}',       [JustificacionWebController::class, 'destroy']);
 
 // Estadísticas
-$router->authWebGet('/v1/web/stats',                     [StatsController::class, 'index']);
+// FIX Bug #12: StatsController solo tiene el método 'dashboard', no 'index'.
+$router->authWebGet('/v1/web/stats',                     [StatsController::class, 'dashboard']);

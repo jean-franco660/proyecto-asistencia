@@ -18,14 +18,27 @@ class Response
 
     /**
      * Error genérico con código HTTP personalizado.
-     * { "success": false, "message": "..." }
+     * { "success": false, "message": "...", "data": ... }
+     *
+     * FIX Bug #5: Se añadió el parámetro opcional $data para permitir contexto
+     * adicional en errores (ej: distancia_metros y radio_sede en validación GPS).
      */
-    public static function error(string $message, int $status = 400): void
+    public static function error(string $message, int $status = 400, mixed $data = null): void
     {
-        self::json([
-            'success' => false,
-            'message' => $message,
-        ], $status);
+        $body = ['success' => false, 'message' => $message];
+        if ($data !== null) {
+            $body['data'] = $data;
+        }
+        self::json($body, $status);
+    }
+
+    /**
+     * Alias de unprocessable() para compatibilidad con controllers que usaban
+     * validationError() — FIX Bug #2.
+     */
+    public static function validationError(array $errors, string $message = 'Datos requeridos'): void
+    {
+        self::unprocessable($message, $errors);
     }
 
     /**

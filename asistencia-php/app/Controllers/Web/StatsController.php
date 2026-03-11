@@ -71,14 +71,29 @@ class StatsController
         $observadas = $stmt2->fetch();
 
         // Justificaciones pendientes
+        $whereJust = '1=1';
+        $params3 = [];
+
+        if ($this->rol() === 'supervisor') {
+            $whereJust = "j.sede_id IN (
+                SELECT sede_id FROM usuario_web_sede
+                WHERE usuario_web_id = :uid3 AND activo = 1
+            )";
+            $params3[':uid3'] = $this->userId();
+        }
+
+        if ($sedeId) {
+            $whereJust .= " AND j.sede_id = :sid3";
+            $params3[':sid3'] = (int) $sedeId;
+        }
+
         $stmt3 = $this->db->prepare("
             SELECT COUNT(*) AS justificaciones_pendientes
             FROM justificaciones j
-            WHERE j.estado = 'PENDIENTE'
-              " . ($sedeId ? "AND j.sede_id = :sid2" : "") . "
+            WHERE j.estado = 'PENDIENTE' AND {$whereJust}
         ");
-        $params3 = $sedeId ? [':sid2' => (int) $sedeId] : [];
-        $stmt3->execute($params3);
+        $params3_exec = array_merge($params3);
+        $stmt3->execute($params3_exec);
         $justPendientes = $stmt3->fetch();
 
         Response::success([

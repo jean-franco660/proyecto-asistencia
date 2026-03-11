@@ -29,8 +29,10 @@ class AuthAppController
         $codigo   = trim($request->input('codigo_empleado', ''));
         $password = $request->input('password', '');
 
+        // FIX Bug #2: validationError() no existía en Response. Se reemplaza
+        // por Response::unprocessable() que sí existe y acepta array de errores.
         if (!$codigo || !$password) {
-            $this->response->validationError([
+            Response::unprocessable('Datos requeridos', [
                 'codigo_empleado' => 'Requerido',
                 'password'        => 'Requerido',
             ]);
@@ -55,14 +57,16 @@ class AuthAppController
      */
     public function perfil(Request $request): void
     {
-        $userId  = $request->getAttribute('auth_user_id');
-        $usuario = $this->model->find((int)$userId);
+        // FIX Bug #3: Request::getAttribute() no existe. El payload JWT
+        // lo inyecta el Middleware en $_REQUEST['auth_user']['sub'].
+        $userId  = (int) ($_REQUEST['auth_user']['sub'] ?? 0);
+        $usuario = $this->model->find($userId);
 
         if (!$usuario) {
-            $this->response->notFound('Usuario no encontrado.');
+            Response::notFound('Usuario no encontrado.');
         }
 
-        $this->response->success($this->sanitize($usuario));
+        Response::success($this->sanitize($usuario));
     }
 
     /**
@@ -89,7 +93,9 @@ class AuthAppController
             'exp'  => time() + $expiration,
             'sub'  => $usuario['id'],
             'rol'  => $usuario['rol'],
-            'type' => $type,
+            // FIX Bug #1: el claim era 'type' pero AuthAppMiddleware verifica 'tipo'.
+            // Con 'type' el middleware rechazaba TODOS los tokens de la app.
+            'tipo' => $type,
         ];
 
         return JWT::encode($payload, $secret, 'HS256');

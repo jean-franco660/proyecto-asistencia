@@ -30,12 +30,15 @@ class AuthWebController
         if ($user['estado'] !== 'ACTIVO')
             Response::error('Cuenta deshabilitada. Contacte al administrador.', 403);
 
+        // FIX Bug #7: la expiración estaba hardcodeada a 86400 (24h).
+        // Ahora lee JWT_EXPIRATION del .env para ser consistente con la app móvil
+        // y permitir ajustarlo sin tocar código.
         $payload = [
             'sub'  => $user['id'],
             'rol'  => $user['rol'],
-            'tipo' => 'web',   
+            'tipo' => 'web',
             'iat'  => time(),
-            'exp'  => time() + 86400,
+            'exp'  => time() + (int)($_ENV['JWT_EXPIRATION'] ?? 86400),
         ];
 
         $token = JWT::encode($payload, $_ENV['JWT_SECRET'], 'HS256');

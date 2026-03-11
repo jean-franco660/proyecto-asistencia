@@ -39,7 +39,11 @@ class Router
         ];
     }
 
-    public function dispatch(): void
+    /**
+     * FIX Bug #6: Se añadió el parámetro Request $request para evitar que
+     * dispatch() creara un segundo objeto Request ignorando el de index.php.
+     */
+    public function dispatch(Request $request): void
     {
         // Manejar preflight CORS
         if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
@@ -52,7 +56,7 @@ class Router
 
         $method = $_SERVER['REQUEST_METHOD'];
         $uri    = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
-        $req    = new Request();
+        $req    = $request; // Usa el Request inyectado desde index.php
 
         foreach ($this->routes as $route) {
             if ($route['method'] !== $method) continue;

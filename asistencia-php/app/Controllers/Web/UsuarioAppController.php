@@ -156,14 +156,26 @@ class UsuarioAppController
 
         if (!$sedeId || !$horarioId) Response::unprocessable('sede_id y horario_sede_id son requeridos');
 
-        // Desactivar asignación anterior
-        $this->db->prepare("UPDATE usuario_app_sede SET estado = 'INACTIVO' WHERE usuario_app_id = ?")->execute([$id]);
+        // FIX Bug #10: Las dos operaciones DML (desactivar anterior + crear nueva)
+        // no estaban en transacción. Si el INSERT fallaba, el trabajador quedaba
+        // sin asignación porque el UPDATE ya se había ejecutado.
+        $this->db->beginTransaction();
+        try {
+            // Desactivar asignación anterior
+            $this->db->prepare("UPDATE usuario_app_sede SET estado = 'INACTIVO' WHERE usuario_app_id = ?")->execute([$id]);
 
-        // Crear nueva asignación
-        $this->db->prepare("
-            INSERT INTO usuario_app_sede (usuario_app_id, sede_id, horario_sede_id, cargo, estado)
-            VALUES (?, ?, ?, ?, 'ACTIVO')
-        ")->execute([$id, $sedeId, $horarioId, $cargo]);
+            // Crear nueva asignación
+            $this->db->prepare("
+                INSERT INTO usuario_app_sede (usuario_app_id, sede_id, horario_sede_id, cargo, estado)
+                VALUES (?, ?, ?, ?, 'ACTIVO')
+            ")->execute([$id, $sedeId, $horarioId, $cargo]);
+
+            $this->db->commit();
+        } catch (\Exception $e) {
+            $this->db->rollBack();
+            error_log('[UsuarioAppController::asignarHorario] Error: ' . $e->getMessage());
+            Response::error('Error al asignar sede y horario. Intente nuevamente.', 500);
+        }
 
         Response::success(null, 'Sede y horario asignados correctamente');
     }

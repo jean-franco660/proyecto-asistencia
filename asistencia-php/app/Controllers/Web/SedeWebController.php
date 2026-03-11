@@ -132,7 +132,11 @@ class SedeWebController
                     409
                 );
             }
-            Response::error('Error al eliminar: ' . $e->getMessage(), 500);
+            // FIX Bug #8: $e->getMessage() exponía detalles internos de MySQL al cliente.
+            // Ahora se loguea internamente para diagnóstico y el cliente recibe
+            // un mensaje genérico que no revela la estructura de la BD.
+            error_log('[SedeWebController::destroy] Error al eliminar sede id=' . $id . ': ' . $e->getMessage());
+            Response::error('Error interno al eliminar la sede. Contacte al administrador.', 500);
         }
     }
 }

@@ -15,7 +15,41 @@ class AsistenciaWebController
 
     private function userId(): int { return (int) ($_REQUEST['auth_user']['sub'] ?? 0); }
     private function rol(): string { return $_REQUEST['auth_user']['rol'] ?? ''; }
-
+    
+    public function show(Request $req): void
+    {
+        $id = (int) $req->param('id');
+        
+        $sql = "
+            SELECT ad.*, a.fecha, a.estado_diario, a.usuario_app_id,
+                u.nombres, u.apellido_paterno, u.codigo_empleado,
+                s.nombre AS sede_nombre
+            FROM asistencias_diarias ad
+            INNER JOIN asistencias a ON a.id = ad.asistencia_id
+            INNER JOIN usuarios_app u ON u.id = a.usuario_app_id
+            INNER JOIN sedes s ON s.id = a.sede_id
+            WHERE ad.id = ?
+        ";
+        
+        $stmt = $this->db->prepare($sql);
+        $stmt->execute([$id]);
+        $marcacion = $stmt->fetch();
+        
+        if (!$marcacion) Response::notFound('Marcación no encontrada');
+        
+        // Supervisor: solo puede ver sus sedes
+        if ($this->rol() === 'supervisor') {
+            $stmtChk = $this->db->prepare("
+                SELECT id FROM usuario_web_sede
+                WHERE usuario_web_id = ? AND sede_id = ? AND activo = 1
+            ");
+            $stmtChk->execute([$this->userId(), $marcacion['sede_id']]);
+            if (!$stmtChk->fetch()) Response::error('Sin acceso a esta marcación', 403);
+        }
+        
+        unset($marcacion['latitud'], $marcacion['longitud']); // Datos sensibles (opcional)
+        Response::success($marcacion);
+    }
     public function index(Request $req): void
     {
         $sql = "
